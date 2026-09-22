@@ -208,6 +208,9 @@ pub(crate) mod device;
 pub mod dns_server;
 /// Lab event system: typed events, state reducer, file writer.
 pub mod event;
+/// Native InfiniBand management fabrics, using ibsim and unmodified UMAD tools.
+#[cfg(feature = "ibsim")]
+pub mod infiniband;
 pub(crate) mod firewall;
 /// Unified interface configuration and runtime handle.
 pub(crate) mod iface;

@@ -9,9 +9,11 @@ authors.workspace = true
 repository.workspace = true
 
 [features]
+ibsim = ["dep:ibsim"]
 iroh-metrics = ["dep:iroh-metrics"]
 
 [dependencies]
+ibsim = { path = "../vendor/ibsim/bindings/rust/ibsim", optional = true }
 iroh-metrics = { version = "1.0.0", optional = true }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

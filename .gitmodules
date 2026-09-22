@@ -1,0 +1,3 @@
+[submodule "vendor/ibsim"]
+	path = vendor/ibsim
+	url = https://github.com/QuasarRay/ibsim.git

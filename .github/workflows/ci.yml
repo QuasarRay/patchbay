@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -62,6 +63,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -104,6 +106,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -155,8 +158,46 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          submodules: recursive
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --workspace --all-features
           command: check
           command-arguments: "-Dwarnings"
+
+  ibsim:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTC_WRAPPER: ""
+      IBSIM_BIN: ${{ github.workspace }}/vendor/ibsim/ibsim/ibsim
+      UMAD2SIM_LIB: ${{ github.workspace }}/vendor/ibsim/umad2sim/libumad2sim.so
+      IBSIM_TEST_DIR: ${{ runner.temp }}/ibsim-native
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Install native InfiniBand and namespace tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libibmad-dev libibumad-dev opensm infiniband-diags nftables iproute2
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          make -C vendor/ibsim/ibsim
+          make -C vendor/ibsim/umad2sim
+      - name: Lint and validate IB graph contracts
+        run: |
+          cargo clippy --locked -p patchbay --features ibsim --lib -- -D warnings
+          cargo test --locked -p patchbay --features ibsim --lib infiniband
+      - name: Real OpenSM discovery, partition and recovery
+        run: cargo test --locked -p patchbay --features ibsim --lib infiniband -- --ignored --nocapture --test-threads=1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-ibsim
+          path: ${{ runner.temp }}/ibsim-native*
+          if-no-files-found: warn

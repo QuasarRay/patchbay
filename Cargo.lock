@@ -1227,6 +1227,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibsim"
+version = "0.12.0"
+dependencies = [
+ "ibsim-sys",
+]
+
+[[package]]
+name = "ibsim-sys"
+version = "0.12.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1952,6 +1966,7 @@ dependencies = [
  "futures-buffered",
  "hickory-proto",
  "hickory-resolver",
+ "ibsim",
  "ipnet",
  "iroh-metrics",
  "libc",
