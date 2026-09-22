@@ -24,30 +24,27 @@ fn invalid_cables_and_native_command_injection_are_rejected_atomically() {
     let before = t.render().unwrap();
     assert!(t.add_node("x\"\nQuit", IbNodeKind::Hca, 1).is_err());
     assert!(t.add_node(&"a".repeat(32), IbNodeKind::Hca, 1).is_err());
-    assert!(
-        t.add_link(
+    assert!(t
+        .add_link(
             "dup",
             [IbEndpoint::new("s1", 3), IbEndpoint::new("s2", 3)],
             true
         )
-        .is_err()
-    );
-    assert!(
-        t.add_link(
+        .is_err());
+    assert!(t
+        .add_link(
             "zero",
             [IbEndpoint::new("s1", 0), IbEndpoint::new("s2", 0)],
             true
         )
-        .is_err()
-    );
-    assert!(
-        t.add_link(
+        .is_err());
+    assert!(t
+        .add_link(
             "absent",
             [IbEndpoint::new("missing", 1), IbEndpoint::new("s2", 9)],
             true
         )
-        .is_err()
-    );
+        .is_err());
     assert_eq!(before, t.render().unwrap());
 }
 
@@ -94,21 +91,19 @@ async fn native_management_and_fault_recovery() -> Result<()> {
     }
     let mut trace = Command::new("ibtracert");
     trace.args([a.lid.to_string(), b.lid.to_string()]);
-    assert!(
-        f.run("h1", trace, Duration::from_secs(20))
-            .await?
-            .status
-            .success()
-    );
+    assert!(f
+        .run("h1", trace, Duration::from_secs(20))
+        .await?
+        .status
+        .success());
     f.set_link_up("core", false).await?;
     let mut probe = Command::new("smpquery");
     probe.args(["-D", "-t", "100", "nodedesc", "0,1,2,1"]);
-    assert!(
-        !f.run("h1", probe, Duration::from_secs(10))
-            .await?
-            .status
-            .success()
-    );
+    assert!(!f
+        .run("h1", probe, Duration::from_secs(10))
+        .await?
+        .status
+        .success());
     assert!(!f.topology.links["backup"].up);
     f.set_link_up("backup", true).await?;
     f.wait_active("h2", Duration::from_secs(20)).await?;
@@ -164,14 +159,12 @@ async fn native_cancelled_mutation_fails_closed() -> Result<()> {
         Pid::from_raw(fabric.server.0.id().context("server PID")? as i32),
         Signal::SIGSTOP,
     )?;
-    assert!(
-        timeout(
-            Duration::from_millis(100),
-            fabric.set_link_up("core", false)
-        )
-        .await
-        .is_err()
-    );
+    assert!(timeout(
+        Duration::from_millis(100),
+        fabric.set_link_up("core", false)
+    )
+    .await
+    .is_err());
     assert!(fabric.failed);
     assert!(fabric.topology.links["core"].up);
     assert!(fabric.set_link_up("backup", true).await.is_err());

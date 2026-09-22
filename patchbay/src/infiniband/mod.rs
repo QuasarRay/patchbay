@@ -17,15 +17,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use nix::{
-    sys::signal::{Signal, killpg},
+    sys::signal::{killpg, Signal},
     unistd::Pid,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdin, ChildStdout, Command},
-    time::{Instant, timeout},
+    time::{timeout, Instant},
 };
 pub use topology::{IbEndpoint, IbLink, IbNode, IbNodeKind, IbTopology};
 

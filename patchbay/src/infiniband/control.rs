@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use ibsim::{ClientInfo, ControlMessage, ControlType, PortInfo, WireMessage};
 
 static CONNECTION: AtomicU32 = AtomicU32::new(0x4000_0000);

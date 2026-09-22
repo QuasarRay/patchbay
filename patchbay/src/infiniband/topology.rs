@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt::Write};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 /// The two native IB node types supported by this adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
