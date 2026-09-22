@@ -172,13 +172,13 @@ jobs:
       RUSTC_WRAPPER: ""
       IBSIM_BIN: ${{ github.workspace }}/vendor/ibsim/ibsim/ibsim
       UMAD2SIM_LIB: ${{ github.workspace }}/vendor/ibsim/umad2sim/libumad2sim.so
-      IBSIM_TEST_DIR: ${{ runner.temp }}/ibsim-native
+      IBSIM_TEST_DIR: /tmp/patchbay-ibsim-native
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
           components: clippy
@@ -195,9 +195,9 @@ jobs:
           cargo test --locked -p patchbay --features ibsim --lib infiniband
       - name: Real OpenSM discovery, partition and recovery
         run: cargo test --locked -p patchbay --features ibsim --lib infiniband -- --ignored --nocapture --test-threads=1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: native-ibsim
-          path: ${{ runner.temp }}/ibsim-native*
+          path: /tmp/patchbay-ibsim-native*
           if-no-files-found: warn
