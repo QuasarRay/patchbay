@@ -321,12 +321,17 @@ impl IbFabric {
         } else {
             format!("Unlink \"{}\"[{}]\n", a.node, a.port)
         };
+        // Cancellation after sending a command leaves its outcome unknown.
+        // Keep the backend failed until both acknowledgement and model commit,
+        // so a dropped future cannot make the next call consume a stale prompt.
+        self.failed = true;
         self.input.write_all(line.as_bytes()).await?;
         let response = self.prompt().await?;
         if !response.trim().is_empty() {
             bail!("ibsim rejected cable change: {response}");
         }
         self.topology.links.get_mut(id).expect("validated link").up = up;
+        self.failed = false;
         Ok(())
     }
     /// Query the native first HCA port, or switch port zero.

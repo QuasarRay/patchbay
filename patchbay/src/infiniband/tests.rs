@@ -150,3 +150,31 @@ async fn native_isolated_namespace() -> Result<()> {
     fabric.shutdown().await?;
     Ok(())
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires compiled native ibsim and umad2sim"]
+async fn native_cancelled_mutation_fails_closed() -> Result<()> {
+    let options = IbOptions {
+        binary: std::env::var("IBSIM_BIN")?.into(),
+        umad_library: std::env::var("UMAD2SIM_LIB")?.into(),
+        state_dir: format!("{}-cancelled", std::env::var("IBSIM_TEST_DIR")?).into(),
+    };
+    let mut fabric = IbFabric::start(Scope::Current, topology(), options).await?;
+    killpg(
+        Pid::from_raw(fabric.server.0.id().context("server PID")? as i32),
+        Signal::SIGSTOP,
+    )?;
+    assert!(
+        timeout(
+            Duration::from_millis(100),
+            fabric.set_link_up("core", false)
+        )
+        .await
+        .is_err()
+    );
+    assert!(fabric.failed);
+    assert!(fabric.topology.links["core"].up);
+    assert!(fabric.set_link_up("backup", true).await.is_err());
+    fabric.shutdown().await?;
+    Ok(())
+}
