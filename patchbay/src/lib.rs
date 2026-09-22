@@ -211,6 +211,9 @@ pub mod event;
 pub(crate) mod firewall;
 /// Unified interface configuration and runtime handle.
 pub(crate) mod iface;
+/// Native InfiniBand management fabrics, using ibsim and unmodified UMAD tools.
+#[cfg(feature = "ibsim")]
+pub mod infiniband;
 mod lab;
 mod metrics;
 pub(crate) mod nat;

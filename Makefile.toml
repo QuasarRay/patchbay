@@ -16,12 +16,18 @@ script = ['''
   cargo run -p patchbay-vm -- test --target "x86_64-unknown-linux-musl" ${@}
   ''']
 
+# Format every workspace member, excluding pinned third-party path dependencies.
 [tasks.format]
 workspace = false
 command = "cargo"
 args = [
      "fmt",
-     "--all",
+     "--package", "patchbay",
+     "--package", "patchbay-utils",
+     "--package", "patchbay-runner",
+     "--package", "patchbay-vm",
+     "--package", "patchbay-server",
+     "--package", "patchbay-cli",
      "--",
      "--config",
      "unstable_features=true",
@@ -34,7 +40,12 @@ workspace = false
 command = "cargo"
 args = [
      "fmt",
-     "--all",
+     "--package", "patchbay",
+     "--package", "patchbay-utils",
+     "--package", "patchbay-runner",
+     "--package", "patchbay-vm",
+     "--package", "patchbay-server",
+     "--package", "patchbay-cli",
      "--check",
      "--",
      "--config",

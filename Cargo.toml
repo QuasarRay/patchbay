@@ -1,6 +1,7 @@
 [workspace]
 members = ["patchbay", "patchbay-utils", "patchbay-runner", "patchbay-vm", "patchbay-server", "patchbay-cli"]
 resolver = "2"
+exclude = ["vendor/ibsim"]
 
 [workspace.package]
 edition = "2021"
