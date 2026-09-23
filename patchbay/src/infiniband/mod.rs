@@ -6,9 +6,10 @@
 //! NCCL, or bandwidth/latency emulation. No forwarding algorithm is substituted
 //! for OpenSM or ibsim.
 mod control;
+mod log;
 mod topology;
 use std::{
-    fs::{self, File},
+    fs,
     io::Write,
     os::unix::{fs::DirBuilderExt, process::CommandExt},
     path::{Path, PathBuf},
@@ -17,15 +18,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use nix::{
-    sys::signal::{killpg, Signal},
+    sys::signal::{Signal, killpg},
     unistd::Pid,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdin, ChildStdout, Command},
-    time::{timeout, Instant},
+    time::{Instant, timeout},
 };
 pub use topology::{IbEndpoint, IbLink, IbNode, IbNodeKind, IbTopology};
 
@@ -104,6 +105,30 @@ impl Drop for Scope {
 
 struct Process(Child);
 impl Process {
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+        if let Some(pid) = self.0.id() {
+            let status = waitid(
+                Id::Pid(Pid::from_raw(pid as i32)),
+                WaitPidFlag::WEXITED | WaitPidFlag::WNOHANG | WaitPidFlag::WNOWAIT,
+            )?;
+            if status == WaitStatus::StillAlive {
+                return Ok(None);
+            }
+            // Kill pipe-holding descendants while the zombie leader still pins
+            // this process-group identity. Only then let Tokio reap the leader.
+            let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        }
+        self.0.try_wait()
+    }
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
     fn signal(&mut self) {
         if let Some(id) = self.0.id() {
             // Each child has its own process group. ESRCH means it already exited.
@@ -131,7 +156,10 @@ pub struct IbFabric {
     manager: Option<Process>,
     input: ChildStdin,
     output: ChildStdout,
-    transcript: File,
+    transcript: log::CappedFile,
+    logs: log::Budget,
+    service_logs: Vec<log::Completion>,
+    commands: usize,
     topology: IbTopology,
     options: IbOptions,
     basename: String,
@@ -193,6 +221,8 @@ impl IbFabric {
             std::process::id(),
             FABRIC.fetch_add(1, Ordering::Relaxed)
         );
+        let logs = log::Budget::new();
+        let (stderr, stderr_done) = logs.capture(&options.state_dir.join("ibsim.stderr.log"))?;
         let mut cmd = Command::new(&options.binary);
         cmd.arg("-s").args([
             "-N",
@@ -214,19 +244,22 @@ impl IbFabric {
             .env_remove("LD_PRELOAD");
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(File::create(options.state_dir.join("ibsim.stderr.log"))?)
+            .stderr(stderr)
             .kill_on_drop(true);
         cmd.as_std_mut().process_group(0);
         let mut server = Process(scope.spawn(cmd)?);
         let input = server.0.stdin.take().context("ibsim stdin")?;
         let output = server.0.stdout.take().context("ibsim stdout")?;
-        let transcript = File::create(options.state_dir.join("ibsim.console.log"))?;
+        let transcript = logs.file(&options.state_dir.join("ibsim.console.log"))?;
         let mut fabric = Self {
             server,
             manager: None,
             input,
             output,
             transcript,
+            logs,
+            service_logs: vec![stderr_done],
+            commands: 0,
             topology,
             options,
             basename,
@@ -268,12 +301,12 @@ impl IbFabric {
         if self.failed {
             bail!("ibsim backend is failed; rebuild it before further operations");
         }
-        if let Some(status) = self.server.0.try_wait()? {
+        if let Some(status) = self.server.try_wait()? {
             self.failed = true;
             bail!("native ibsim exited: {status}");
         }
         if let Some(manager) = &mut self.manager {
-            if let Some(status) = manager.0.try_wait()? {
+            if let Some(status) = manager.try_wait()? {
                 bail!("OpenSM exited: {status}");
             }
         }
@@ -375,15 +408,16 @@ impl IbFabric {
         fs::create_dir(&cache)?;
         let mut cmd = Command::new(opensm.as_ref());
         self.prepare(node, &mut cmd)?;
-        cmd.args(["-s", "1", "-f"])
-            .arg(self.options.state_dir.join("opensm.log"));
+        cmd.args(["-s", "1", "-f"]).arg("/dev/stdout");
         cmd.env("OSM_CACHE_DIR", &cache).env("OSM_TMP_DIR", &cache);
-        cmd.stdout(File::create(
-            self.options.state_dir.join("opensm.stdout.log"),
-        )?)
-        .stderr(File::create(
-            self.options.state_dir.join("opensm.stderr.log"),
-        )?);
+        let (stdout, out_done) = self
+            .logs
+            .capture(&self.options.state_dir.join("opensm.stdout.log"))?;
+        let (stderr, err_done) = self
+            .logs
+            .capture(&self.options.state_dir.join("opensm.stderr.log"))?;
+        cmd.stdout(stdout).stderr(stderr);
+        self.service_logs.extend([out_done, err_done]);
         self.manager = Some(Process(self.scope.spawn(cmd)?));
         self.wait_active(node, Duration::from_secs(30)).await?;
         Ok(())
@@ -406,7 +440,8 @@ impl IbFabric {
         }
     }
     /// Execute a native UMAD tool at a graph node. Returns its actual exit status.
-    /// Output goes to bounded-on-read files so a child cannot deadlock on a pipe.
+    /// Pipes are continuously drained into capped files (16 MiB each, 64 MiB per fabric).
+    /// At most 1024 commands retain logs; exhausted budgets fail without unbounded growth.
     pub async fn run(
         &mut self,
         node: &str,
@@ -418,6 +453,10 @@ impl IbFabric {
             bail!("IB command deadline must be in (0,600] seconds");
         }
         self.prepare(node, &mut cmd)?;
+        if self.commands >= 1024 {
+            bail!("IB command retention limit reached; start a new fabric");
+        }
+        self.commands += 1;
         let id = COMMAND.fetch_add(1, Ordering::Relaxed);
         let stdout = self
             .options
@@ -427,21 +466,19 @@ impl IbFabric {
             .options
             .state_dir
             .join(format!("command-{id}.stderr.log"));
-        cmd.stdout(File::create(&stdout)?)
-            .stderr(File::create(&stderr)?);
+        let (out, out_done) = self.logs.capture(&stdout)?;
+        let (err, err_done) = self.logs.capture(&stderr)?;
+        cmd.stdout(out).stderr(err);
         let mut process = Process(self.scope.spawn(cmd)?);
-        let status = match timeout(deadline, process.0.wait()).await {
+        let status = match timeout(deadline, process.wait()).await {
             Ok(status) => status?,
             Err(_) => {
                 process.stop().await?;
                 bail!("native IB command timed out");
             }
         };
-        for path in [&stdout, &stderr] {
-            if fs::metadata(path)?.len() > 16 * 1024 * 1024 {
-                bail!("native IB command output exceeds 16 MiB");
-            }
-        }
+        out_done.finish().await?;
+        err_done.finish().await?;
         Ok(Output {
             status,
             stdout: fs::read(stdout)?,
@@ -451,10 +488,21 @@ impl IbFabric {
     /// Terminate and reap both native services. Safe to call more than once.
     pub async fn shutdown(&mut self) -> Result<()> {
         self.failed = true;
-        if let Some(mut manager) = self.manager.take() {
+        if let Some(manager) = &mut self.manager {
             manager.stop().await?;
         }
-        self.server.stop().await
+        self.manager = None;
+        self.server.stop().await?;
+        let mut error = None;
+        while let Some(log) = self.service_logs.pop() {
+            if let Err(e) = log.finish().await {
+                error = Some(e);
+            }
+        }
+        if let Some(error) = error {
+            return Err(error.into());
+        }
+        Ok(())
     }
 }
 
