@@ -4,7 +4,7 @@
 //! external endpoint lifecycle. This API never enters, kills or deletes a guest
 //! namespace. It does not call `init_userns`. No interface is adopted by name
 //! alone: ifindices and bridge aliases are checked before every mutation.
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeSet, process::Command};
@@ -62,6 +62,46 @@ fn inspect(name: &str) -> Result<Value> {
     Ok(rows[0].clone())
 }
 impl Endpoint {
+    /// Prepare a freshly created external veth for an unnumbered cable.
+    /// The caller MUST own its lifecycle and hold the host mutation lock.
+    /// Automatic IPv6 link-local addresses may exist after Incus starts a guest;
+    /// only those may be removed. Any IPv4/global address or existing master is
+    /// refused. Capture and recheck ifindex around the scoped sysctl mutation.
+    pub fn prepare_owned(name: &str) -> Result<Self> {
+        let v = inspect(name)?;
+        ensure!(
+            v["linkinfo"]["info_kind"] == "veth" && v.get("master").is_none(),
+            "owned endpoint must be an unattached veth"
+        );
+        let endpoint = Self {
+            name: name.into(),
+            ifindex: v["ifindex"].as_u64().context("missing ifindex")?,
+        };
+        let addresses = ip(&["-j", "address", "show", "dev", name])?;
+        let addresses = addresses[0]["addr_info"]
+            .as_array()
+            .context("address array")?;
+        ensure!(
+            addresses
+                .iter()
+                .all(|a| a["family"] == "inet6" && a["scope"] == "link"),
+            "refusing a numbered host endpoint"
+        );
+        endpoint.verify()?;
+        let setting = format!("/proc/sys/net/ipv6/conf/{name}/disable_ipv6");
+        match std::fs::write(setting, "1\n") {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && addresses.is_empty() => (),
+            Err(e) => return Err(e.into()),
+        }
+        endpoint.verify()?;
+        let checked = Self::observe(name)?;
+        ensure!(
+            checked.ifindex == endpoint.ifindex,
+            "endpoint changed during preparation"
+        );
+        Ok(endpoint)
+    }
     /// Observe an unnumbered, unattached veth. An existing master is refused.
     pub fn observe(name: &str) -> Result<Self> {
         let v = inspect(name)?;
